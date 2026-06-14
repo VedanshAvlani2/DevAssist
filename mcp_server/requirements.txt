@@ -1,0 +1,9 @@
+mcp
+transformers
+peft
+torch
+accelerate
+openai
+chromadb
+langchain-openai
+python-dotenv

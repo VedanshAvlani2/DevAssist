@@ -1,0 +1,29 @@
+# Core
+python-dotenv
+openai
+
+# RAG - Phase 1
+chromadb
+langchain
+langchain-openai
+langchain-text-splitters
+
+# Fine-tuning - Phase 2 (inference only, skip if no GPU)
+torch
+transformers
+peft
+accelerate
+bitsandbytes
+
+# MCP - Phase 3
+mcp
+
+# LangGraph - Phase 4
+langgraph
+
+# CrewAI - Phase 5
+crewai
+crewai-tools
+
+# GitHub
+PyGithub

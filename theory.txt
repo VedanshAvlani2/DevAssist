@@ -1,0 +1,255 @@
+What is an LLM
+Large Language Model. Trained on billions of text examples. Predicts the next token (word piece) given previous tokens. Mistral 7B has 7 billion parameters — numbers that got adjusted during training to make predictions accurate. When you prompt it, it runs your text through all 7B parameters and produces a response.
+
+What is Fine-tuning
+Pretrained Mistral 7B knows general language. Fine-tuning adjusts its weights further on a specific dataset — in this case 4000 pairs of coding instructions and Python implementations. After fine-tuning, it is better at writing Python code from natural language task descriptions.
+Full fine-tuning would retrain all 7B parameters — needs 8x A100 GPUs, costs thousands of dollars.
+
+What is LoRA
+Low Rank Adaptation. Instead of retraining all 7B parameters, LoRA inserts small extra matrices alongside specific layers (q_proj, v_proj — the attention layers). Only those small matrices get trained — 6.8M parameters instead of 7B. That is 0.094% of the model. Fits on a free T4 GPU. Results are nearly as good as full fine-tuning for task-specific work.
+The adapter file (adapter_model.safetensors) contains only those 6.8M trained parameters — 13MB instead of 14GB.
+
+What is RAG
+Retrieval Augmented Generation. Problem it solves: LLMs have no knowledge of your specific codebase. If you ask Mistral to add a feature to your app, it will hallucinate function names, import paths, variable names — because it has never seen your code.
+RAG fixes this by fetching relevant code first, then handing it to the LLM as context. The LLM now writes code that matches your existing patterns.
+Two steps: index once, retrieve on every query.
+
+What is an Embedding
+A vector — a list of numbers like [0.23, -0.81, 0.44, ...] — 1536 numbers for OpenAI's model. Represents the meaning of a piece of text. Similar meaning = similar numbers = close together in 1536-dimensional space.
+Example:
+
+"load files from disk" → vector A
+"read files from repository" → vector B
+"make a chocolate cake" → vector C
+
+Vector A and B are close. Vector C is far away. This is how semantic search works — not keyword matching, meaning matching.
+
+What is ChromaDB
+A vector database. Stores embeddings alongside the original text and metadata. When you query it, it does nearest-neighbor search — finds the vectors closest to your query vector. Returns the original text chunks those vectors represent.
+Sits locally in your chroma_db folder. No server needed, no cloud, just files on disk.
+
+What is the Indexer
+Ran once (or whenever code changes). Walks every file in the repo → splits into 1000-character chunks → sends each chunk to OpenAI embeddings API → gets back a vector → stores vector + chunk text + file path in ChromaDB.
+Result: entire codebase is searchable by meaning.
+
+What is the Retriever
+Runs on every user query. Takes the task description → embeds it into a vector → asks ChromaDB for the 5 closest chunk vectors → returns those chunks with their file paths.
+These chunks become the context handed to the LLM so it knows what existing code looks like before writing anything new.
+
+What MCP Is
+MCP (Model Context Protocol) = standard protocol by Anthropic. Lets AI clients (Claude Desktop, agents) call your tools via JSON-RPC. Your server exposes functions. Clients discover and call them.
+
+What Was Built
+mcp/tools/retrieve.py
+
+Wrapper around Phase 1 RAG retriever. Calls get_relevant_context(), formats chunks into readable string. MCP needs string output — not raw dicts.
+mcp/tools/generate.py
+
+Loads Phase 2 fine-tuned Mistral 7B + LoRA adapter. Builds Alpaca-format prompt. Runs inference. Returns generated code string. Model loads once, reuses on all subsequent calls (_model global).
+mcp/server.py
+
+Core server. Two registered tools: retrieve_code and generate_code. list_tools() advertises tools + their input schemas to clients. call_tool() routes incoming calls to correct function. Runs on stdio — standard for MCP (communication via stdin/stdout, not HTTP).
+
+Key Concepts
+ConceptExplanation@app.list_tools()Tells clients what tools exist@app.call_tool()Handles actual tool executioninputSchemaJSON Schema — validates client inputsasyncio.to_thread()Runs blocking (sync) code inside async serverstdio transportMCP communicates via stdin/stdout pipestypes.TextContentMCP return format — always wrap output in this
+
+Data Flow
+Client query
+    ↓
+MCP server receives tool call
+    ↓
+retrieve_code → ChromaDB → returns chunks
+    ↓
+generate_code → Mistral 7B + LoRA → returns code
+    ↓
+TextContent response → back to client
+
+Why This Matters
+Phases 1 and 2 were isolated scripts. Phase 3 wires them together behind a standard interface any AI client understands. Phase 4 (LangGraph) and Phase 5 (CrewAI) will call these same MCP tools as nodes in an agent graph.
+
+How Phase 1 and 2 connect to the full system
+User: "Add rate limiting to the API"
+        ↓
+Retriever fetches existing API code     ← Phase 1
+        ↓
+Fine-tuned Mistral writes new code      ← Phase 2
+that matches existing patterns
+        ↓
+LangGraph orchestrates the flow         ← Phase 4
+        ↓
+CrewAI agents plan, code, test          ← Phase 5
+        ↓
+MCP tools read files, run tests, PR     ← Phase 3
+        ↓
+GitHub PR opened
+RAG = memory. Fine-tuning = skill. MCP = hands. LangGraph = brain. CrewAI = team.
+
+Phase 4 Theory — LangGraph
+
+What is LangGraph?
+LangGraph is a framework for building stateful, multi-step AI workflows as directed graphs. Built on top of LangChain.
+Normal LLM call = stateless. Input → output. Done.
+LangGraph = stateful. Every step reads from and writes to a shared state object that persists across the entire run.
+
+Core Concepts
+1. State
+
+A typed dictionary shared across all nodes. Every node receives the full state, modifies it, returns it.
+state = {
+    task: "Add docstrings...",
+    subtasks: [...],         ← written by planner
+    retrieved_context: "...", ← written by retriever
+    generated_code: "...",   ← written by generator
+    diff: "...",             ← written by differ
+}
+No node needs to know what came before. It just reads what it needs from state.
+2. Nodes
+
+Plain Python functions. Signature always:
+pythondef my_node(state: MyState) -> MyState:
+    # read from state
+    # do work
+    # return updated state
+3. Edges
+
+Define execution order. Two types:
+
+Fixed edge — always go from A to B
+Conditional edge — go to A or B based on state value (used in Phase 5)
+
+4. Graph
+
+Assembled with StateGraph. Has one entry point, one or more end points.
+START → plan_task → retrieve_context → generate_code → make_diff → END
+5. Compile
+
+builder.compile() locks the graph and returns a runnable. After compile, call .invoke(initial_state) to run.
+
+Why LangGraph over a plain Python script?
+Plain scriptLangGraphFunctions call each other directlyNodes are decoupled — no direct callsState passed manually as argumentsState flows automatically through graphHard to add branching logicConditional edges built-inHard to pause/resumeLangGraph supports checkpointingHard to visualize flowGraph structure is inspectable
+For DevAssist specifically — LangGraph lets Phase 5 (CrewAI) plug agents in as nodes without rewriting existing code.
+
+How DevAssist's Graph Works
+[START]
+   ↓
+[plan_task]
+   GPT-4o receives raw task string.
+   Outputs structured subtasks + target filename.
+   Writes → state["subtasks"], state["target_file"]
+   ↓
+[retrieve_context]
+   Combines task + subtasks into a search query.
+   Calls MCP server → ChromaDB → returns closest code chunks.
+   Writes → state["retrieved_context"]
+   ↓
+[generate_code]
+   GPT-4o receives task + retrieved context.
+   Outputs complete updated Python file.
+   Writes → state["generated_code"]
+   ↓
+[make_diff]
+   Reads original file from disk.
+   Runs difflib.unified_diff against generated code.
+   Writes → state["diff"]
+   ↓
+[END]
+
+What is a Unified Diff?
+Standard format used by Git and GitHub PRs.
+diff--- a/rag/retriever.py     ← original file
++++ b/rag/retriever.py     ← new file
+@@ -4,3 +4,6 @@           ← line numbers affected
+ def get_relevant_context():
+-    pass                  ← removed line (red in GitHub)
++    """                   ← added line (green in GitHub)
++    Finds closest chunks.
++    """
+Lines starting with - = deleted. Lines starting with + = added. Lines with neither = unchanged context.
+
+What LangGraph Enables in Phase 5
+Phase 5 adds CrewAI agents. Each agent becomes a node. LangGraph's conditional edges let the graph route between agents based on task complexity:
+plan_task
+   ↓
+[route]  ← conditional edge
+   ├── simple task → generate_code → diff
+   └── complex task → architect_agent → coder_agent → reviewer_agent → diff
+This is impossible to do cleanly in a plain script. LangGraph makes it one add_conditional_edges() call.
+
+PHASE 5 — CrewAI Multi-Agent Orchestration
+==========================================
+
+WHAT IS AN AI AGENT?
+An agent is an LLM given a role, a goal, a backstory, and optionally tools.
+The role/goal/backstory act as a system prompt — they tell the LLM who it is
+and what it is trying to achieve. The LLM then decides what to do, whether
+to call a tool, and when it is done.
+
+WHAT IS CREWAI?
+CrewAI is a framework for building teams of AI agents that collaborate on a
+task. The three core primitives are:
+- Agent: an LLM with a role, goal, backstory, and optional tools
+- Task: a unit of work assigned to a specific agent, with a description and
+  expected output
+- Crew: a collection of agents and tasks, run in a defined process order
+
+PROCESS TYPES:
+- Process.sequential — tasks run one after another in order. Output of each
+  task is available to later tasks via context=[]. Used in DevAssist.
+- Process.hierarchical — a manager agent delegates tasks to worker agents
+  dynamically. More complex, not used here.
+
+THE @tool DECORATOR:
+CrewAI tools must be functions decorated with @tool. The decorator registers
+the function with CrewAI's tool system so agents can call it automatically
+during execution. Tools receive a single string argument — if multiple values
+are needed, encode them in the string (e.g. pipe-separated).
+
+CONTEXT PASSING:
+Tasks share output via context=[task1, task2] parameter. When a task has
+context set, CrewAI injects the output of those prior tasks into the prompt
+of the current task. This is how PlannerAgent output reaches CoderAgent
+without explicit wiring code.
+
+AGENT SPECIALIZATION:
+Each agent has a narrow role on purpose. Specialization improves output
+quality because the LLM's attention is focused. A single agent asked to
+plan, retrieve, code, review, and ship would produce worse results than five
+focused agents doing one job each.
+
+WHY HTTP CLIENT FOR CHROMADB?
+ChromaDB embeds a Rust-based vector index (chroma-hnswlib) that must be
+compiled from source on Windows. No pre-built wheel exists for Python 3.12.
+Running ChromaDB as a standalone server (chroma run) separates the database
+process from the application process. The client connects over HTTP —
+no compilation required, works across Python versions.
+
+GITHUB PR CREATION FLOW (PyGithub):
+1. Authenticate with personal access token
+2. Get repo object via g.get_repo("username/repo")
+3. Get SHA of latest commit on default branch
+4. Create new branch from that SHA via create_git_ref()
+5. Check if target file exists — if yes, update_file(); if no, create_file()
+6. Open PR from new branch to default branch via create_pull()
+
+LORA AT INFERENCE TIME:
+Phase 2 produced a LoRA adapter (adapter_model.safetensors). At inference,
+the adapter is not called — GPT-4o is used instead due to RAM constraints.
+The adapter is portfolio evidence that fine-tuning was performed. On a
+machine with 28GB+ RAM or a GPU, mcp_server/tools/generate.py loads the
+base Mistral 7B model and merges the LoRA adapter via PeftModel.from_pretrained()
+before running inference.
+
+THE FULL DEVASSIST PIPELINE (all 5 phases combined):
+Natural language task
+  → PlannerAgent (GPT-4o) — subtasks + target_file
+  → RetrieverAgent (GPT-4o + RAG tool) — relevant code chunks from ChromaDB
+  → CoderAgent (GPT-4o) — complete updated file contents
+  → ReviewerAgent (GPT-4o) — APPROVED / REVISION NEEDED
+  → PRAgent (GPT-4o + GitHub tool) — branch + commit + Pull Request URL
+
+TECHNOLOGIES USED ACROSS ALL PHASES:
+Phase 1 — ChromaDB (vector store), OpenAI text-embedding-3-small (embeddings)
+Phase 2 — Mistral 7B (base model), LoRA via PEFT (fine-tuning), Google Colab T4 (GPU)
+Phase 3 — MCP (Model Context Protocol), stdio transport, JSON-RPC
+Phase 4 — LangGraph, StateGraph, TypedDict state, GPT-4o
+Phase 5 — CrewAI, Process.sequential, @tool decorator, PyGithub, HTTP ChromaDB client
