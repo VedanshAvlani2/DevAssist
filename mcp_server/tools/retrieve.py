@@ -14,15 +14,9 @@ def retrieve_code(query: str, n_results: int = 5) -> str:
     Takes a natural language query.
     Returns top matching code chunks from ChromaDB as a formatted string.
     """
-    chunks = get_relevant_context(query, n_results=n_results)
+    result = get_relevant_context(query, n_results=n_results)
 
-    if not chunks:
+    if not result or not result.strip():
         return "No relevant code found in the repository index."
 
-    output = []
-    for i, chunk in enumerate(chunks):
-        output.append(f"--- Chunk {i+1} ---")
-        output.append(f"Source: {chunk['source']}")
-        output.append(f"Content:\n{chunk['content']}")
-
-    return "\n\n".join(output)
+    return result

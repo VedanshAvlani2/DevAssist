@@ -1,0 +1,44 @@
+[
+  {
+    "id": "eval_01",
+    "category": "bug_fix",
+    "description": "Fix the off-by-one error in retrylib/retry.py. The retry decorator uses range(max_attempts - 1) in its loop, which means it only attempts max_attempts-1 times instead of max_attempts times. Change it to range(max_attempts).",
+    "target_file": "retrylib/retry.py",
+    "expected_keyword": "range(max_attempts)"
+  },
+  {
+    "id": "eval_02",
+    "category": "feature_add",
+    "description": "Implement the retry_with_backoff function in retrylib/retry.py. It currently has a stub that just returns None (pass). Implement it to retry the given callable up to max_attempts times, doubling the delay after each failed attempt starting from base_delay seconds, and re-raising the last exception if all attempts fail.",
+    "target_file": "retrylib/retry.py",
+    "expected_keyword": "base_delay"
+  },
+  {
+    "id": "eval_03",
+    "category": "bug_fix",
+    "description": "Fix the mutable default argument bug in retrylib/cache.py. The SimpleCache.__init__ method has default_store={} as a parameter default, which means all instances share the same dict. Change the default to None and initialise self.store = default_store if default_store is not None else {} inside the method body.",
+    "target_file": "retrylib/cache.py",
+    "expected_keyword": "None"
+  },
+  {
+    "id": "eval_04",
+    "category": "bug_fix",
+    "description": "Fix the SimpleCache.get() method in retrylib/cache.py. It currently returns the cached value without checking whether the entry has expired. Before returning the value, call self.is_expired(key) and return None if the entry is expired.",
+    "target_file": "retrylib/cache.py",
+    "expected_keyword": "is_expired"
+  },
+  {
+    "id": "eval_05",
+    "category": "bug_fix",
+    "description": "Fix the is_expired() method in retrylib/cache.py. The TTL comparison is inverted — it currently returns True when the entry has NOT yet expired. Change the comparison from < to > so that it correctly returns True only when the elapsed time exceeds self.ttl.",
+    "target_file": "retrylib/cache.py",
+    "expected_keyword": ">"
+  },
+  {
+    "id": "eval_06",
+    "category": "bug_fix",
+    "description": "Fix the validate_email function in retrylib/validators.py. The current regex pattern r'.+@.+' is too permissive and accepts invalid addresses like 'a@b' with no domain extension. Replace it with a stricter pattern that requires a proper domain and TLD, such as r'^[\\w.+-]+@[\\w-]+\\.[\\w.]+$'. Also add a None check at the start of the function.",
+    "target_file": "retrylib/validators.py",
+    "expected_keyword": "TLD"
+  }
+]

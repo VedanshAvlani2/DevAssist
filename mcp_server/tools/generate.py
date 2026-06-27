@@ -1,14 +1,25 @@
-# graph/nodes/generator.py
+# mcp_server/tools/generate.py
+
+import sys
 import os
+
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-from graph.state import DevAssistState
 
-def generate_code(state: DevAssistState) -> DevAssistState:
-    task = state["task"]
-    context = state.get("retrieved_context", "")
+load_dotenv()
 
-    print(f"[generator] Generating code for: {task[:80]}...")
+
+def generate_code(instruction: str, context: str = "") -> str:
+    """
+    Generates Python code for the given instruction using GPT-4o.
+    Optionally accepts retrieved code context for better results.
+    All logging goes to stderr to keep MCP stdout clean.
+    """
+    sys.stderr.write(f"[generate] Generating code for: {instruction[:80]}...\n")
 
     llm = ChatOpenAI(
         model="gpt-4o",
@@ -20,7 +31,7 @@ def generate_code(state: DevAssistState) -> DevAssistState:
 Given a task and relevant code context, produce ONLY the complete updated Python file.
 No explanations. No markdown fences. No preamble. Raw Python code only."""
 
-    user_prompt = f"""Task: {task}
+    user_prompt = f"""Task: {instruction}
 
 Relevant code context:
 {context}
@@ -34,15 +45,11 @@ Output the complete updated Python file:"""
 
     generated = response.content.strip()
 
-    # Strip markdown fences if GPT-4o wraps output
+    # Strip markdown fences if model wraps output
     if generated.startswith("```"):
         lines = generated.split("\n")
         lines = [l for l in lines if not l.startswith("```")]
         generated = "\n".join(lines).strip()
 
-    print(f"[generator] Generated {len(generated)} chars")
-
-    return {
-        **state,
-        "generated_code": generated
-    }
+    sys.stderr.write(f"[generate] Generated {len(generated)} chars\n")
+    return generated

@@ -11,23 +11,8 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Read from env — override via: GITHUB_REPO=user/repo python -m rag.indexer
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "VedanshAvlani2/DevAssist")
-REPO_NAME = GITHUB_REPO.replace("/", "_")
-CLONE_DIR = f"./indexed_repos/{REPO_NAME}"
-
-# Clone repo if not already cloned
-if not os.path.exists(CLONE_DIR):
-    print(f"Cloning {GITHUB_REPO} into {CLONE_DIR}...")
-    subprocess.run(
-        ["git", "clone", f"https://github.com/{GITHUB_REPO}.git", CLONE_DIR],
-        check=True
-    )
-
-REPO_PATH = CLONE_DIR
-
 ALLOWED_EXTENSIONS = {".py", ".js", ".ts", ".md", ".txt", ".json", ".yaml", ".yml"}
-SKIP_DIRS = {"venv", ".git", "__pycache__", "node_modules", ".env"}
+SKIP_DIRS = {"venv", "venv312", ".git", "__pycache__", "node_modules", ".env"}
 
 
 def load_files_from_repo(repo_path: str) -> list[dict]:
@@ -75,30 +60,48 @@ def chunk_documents(documents: list[dict]) -> list[dict]:
     return chunks
 
 
-def index_repo():
-    print(f"\nIndexing repo: {GITHUB_REPO}")
-    print(f"Collection name: {REPO_NAME}\n")
+def index_repo(github_repo: str = None):
+    """
+    Clone (if needed) and index a GitHub repository into ChromaDB.
 
-    documents = load_files_from_repo(REPO_PATH)
+    Args:
+        github_repo: Repo in 'owner/repo' format. Falls back to GITHUB_REPO env var.
+    """
+    if github_repo is None:
+        github_repo = os.environ.get("GITHUB_REPO", "VedanshAvlani2/DevAssist")
+
+    repo_name = github_repo.replace("/", "_")
+    clone_dir = f"./indexed_repos/{repo_name}"
+
+    if not os.path.exists(clone_dir):
+        print(f"Cloning {github_repo} into {clone_dir}...")
+        subprocess.run(
+            ["git", "clone", f"https://github.com/{github_repo}.git", clone_dir],
+            check=True
+        )
+
+    print(f"\nIndexing repo: {github_repo}")
+    print(f"Collection name: {repo_name}\n")
+
+    documents = load_files_from_repo(clone_dir)
     print(f"\nTotal files loaded: {len(documents)}")
 
     if not documents:
-        print("No files found. Check REPO_PATH or clone failed.")
+        print("No files found. Check the clone directory or repo contents.")
         return
 
     chunks = chunk_documents(documents)
     print(f"Total chunks created: {len(chunks)}")
 
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
+    chroma_client = chromadb.HttpClient(host="localhost", port=8000)
 
-    # Delete only THIS repo's collection — other repos untouched
     try:
-        chroma_client.delete_collection(REPO_NAME)
-        print(f"Deleted old index for {REPO_NAME}.")
+        chroma_client.delete_collection(repo_name)
+        print(f"Deleted old index for {repo_name}.")
     except Exception:
         pass
 
-    collection = chroma_client.create_collection(REPO_NAME)
+    collection = chroma_client.create_collection(repo_name)
 
     embeddings_model = OpenAIEmbeddings(
         model="text-embedding-3-small",
@@ -124,7 +127,7 @@ def index_repo():
 
         print(f"Indexed chunks {i} to {i + len(batch)}")
 
-    print(f"\nDone. {len(chunks)} chunks indexed as '{REPO_NAME}'.")
+    print(f"\nDone. {len(chunks)} chunks indexed as '{repo_name}'.")
 
 
 if __name__ == "__main__":
