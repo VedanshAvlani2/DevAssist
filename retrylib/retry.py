@@ -1,5 +1,11 @@
 """
 retry.py — Retry utilities for retrylib.
+
+This module provides utilities to retry function calls upon failure. It includes
+decorators and functions to automatically retry a function a specified number of
+times, optionally with exponential backoff. These utilities are useful for
+handling transient errors in network calls, file operations, or any other
+operations that may fail intermittently.
 """
 
 import time
